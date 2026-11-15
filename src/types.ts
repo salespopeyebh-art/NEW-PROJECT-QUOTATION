@@ -80,4 +80,5 @@ export interface ExportBackupData {
   documents: DocumentRecord[];
   customers: SavedCustomer[];
   settings: AppSettings;
+  counters?: Record<string, number>;
 }

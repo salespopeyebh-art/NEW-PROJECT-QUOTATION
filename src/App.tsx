@@ -26,9 +26,12 @@ import {
   loadCustomers,
   loadDocuments,
   loadSettings,
+  restoreCounters,
   saveCustomers,
   saveDocuments,
+  saveDocumentTransaction,
   saveSettings,
+  syncCountersWithDocuments,
 } from './utils/storage';
 
 type ActiveTab = 'create' | 'history' | 'customers' | 'settings';
@@ -44,7 +47,7 @@ function createFreshDocument(
   const nowIso = new Date().toISOString();
 
   return {
-    id: crypto.randomUUID ? crypto.randomUUID() : `doc-${Date.now()}`,
+    id: crypto.randomUUID ? crypto.randomUUID() : `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     type,
     number: generateNextDocNumber(type, year, documents, settings),
     isManualNumber: false,
@@ -80,12 +83,19 @@ function createFreshDocument(
 
 export default function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
-  const [documents, setDocuments] = useState<DocumentRecord[]>(() => loadDocuments());
+  const [documents, setDocuments] = useState<DocumentRecord[]>(() => {
+    const docs = loadDocuments();
+    syncCountersWithDocuments(docs);
+    return docs;
+  });
   const [customers, setCustomers] = useState<SavedCustomer[]>(() => loadCustomers());
   const [activeTab, setActiveTab] = useState<ActiveTab>('create');
-  const [activeDoc, setActiveDoc] = useState<DocumentRecord>(() =>
-    createFreshDocument('quotation', loadDocuments(), loadSettings())
-  );
+  const [activeDoc, setActiveDoc] = useState<DocumentRecord>(() => {
+    const docs = loadDocuments();
+    const cfg = loadSettings();
+    syncCountersWithDocuments(docs);
+    return createFreshDocument('quotation', docs, cfg);
+  });
   const [toast, setToast] = useState<{ text: string; tone: 'success' | 'error' } | null>(null);
   const [showStorageBanner, setShowStorageBanner] = useState(true);
 
@@ -150,29 +160,30 @@ export default function App() {
         updatedAt: nowIso,
       };
 
-      setDocuments((prev) => {
-        const existsIdx = prev.findIndex((d) => d.id === normalized.id);
-        let next: DocumentRecord[];
-        if (existsIdx >= 0) {
-          next = [...prev];
-          next[existsIdx] = normalized;
-        } else {
-          next = [normalized, ...prev];
-        }
-        saveDocuments(next);
-        return next;
-      });
+      const { savedDoc, allDocuments, numberAdjustedFrom } = saveDocumentTransaction(
+        normalized,
+        settings
+      );
 
-      setActiveDoc(normalized);
+      setDocuments(allDocuments);
+      setActiveDoc(savedDoc);
 
-      if (normalized.customer.company.trim()) {
-        upsertCustomerFromInfo(normalized.customer);
+      if (savedDoc.customer.company.trim()) {
+        upsertCustomerFromInfo(savedDoc.customer);
       }
 
-      showToast(`${normalized.type === 'quotation' ? 'Quotation' : 'Invoice'} ${normalized.number} saved.`);
-      return normalized;
+      if (numberAdjustedFrom) {
+        showToast(
+          `Number ${numberAdjustedFrom} already existed — saved as ${savedDoc.number}.`
+        );
+      } else {
+        showToast(
+          `${savedDoc.type === 'quotation' ? 'Quotation' : 'Invoice'} ${savedDoc.number} saved.`
+        );
+      }
+      return savedDoc;
     },
-    [showToast, upsertCustomerFromInfo]
+    [settings, showToast, upsertCustomerFromInfo]
   );
 
   const handleDownloadPdf = useCallback(
@@ -192,11 +203,13 @@ export default function App() {
 
   const handleNewBlank = useCallback(
     (type: DocumentType) => {
-      const fresh = createFreshDocument(type, documents, settings);
+      const latestDocs = loadDocuments();
+      const latestSettings = loadSettings();
+      const fresh = createFreshDocument(type, latestDocs, latestSettings);
       setActiveDoc(fresh);
       setActiveTab('create');
     },
-    [documents, settings]
+    []
   );
 
   const handleOpenDoc = useCallback((doc: DocumentRecord) => {
@@ -206,13 +219,15 @@ export default function App() {
 
   const handleDuplicateDoc = useCallback(
     (source: DocumentRecord) => {
+      const latestDocs = loadDocuments();
+      const latestSettings = loadSettings();
       const date = formatTodayDDMMYYYY();
       const year = extractYearFromDDMMYYYY(date);
       const nowIso = new Date().toISOString();
       const cloned: DocumentRecord = {
         ...source,
-        id: crypto.randomUUID ? crypto.randomUUID() : `doc-${Date.now()}`,
-        number: generateNextDocNumber(source.type, year, documents, settings),
+        id: crypto.randomUUID ? crypto.randomUUID() : `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        number: generateNextDocNumber(source.type, year, latestDocs, latestSettings),
         isManualNumber: false,
         date,
         status: 'Draft',
@@ -229,23 +244,31 @@ export default function App() {
       setActiveTab('create');
       showToast(`Duplicated as ${cloned.number}. Review and save when ready.`);
     },
-    [documents, settings, showToast]
+    [showToast]
   );
 
   const handleConvertToInvoice = useCallback(
     (quotation: DocumentRecord) => {
+      const latestDocs = loadDocuments();
+      const latestSettings = loadSettings();
       const date = formatTodayDDMMYYYY();
       const year = extractYearFromDDMMYYYY(date);
       const nowIso = new Date().toISOString();
-      const nextInvNum = generateNextDocNumber('invoice', year, documents, settings);
+      const nextInvNum = generateNextDocNumber('invoice', year, latestDocs, latestSettings);
 
-      const newInvoice: DocumentRecord = {
-        id: crypto.randomUUID ? crypto.randomUUID() : `doc-${Date.now()}`,
+      const draftInvoice: DocumentRecord = {
+        id: crypto.randomUUID ? crypto.randomUUID() : `doc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         type: 'invoice',
         number: nextInvNum,
         isManualNumber: false,
         date,
-        customer: { ...quotation.customer },
+        customer: {
+          company: quotation.customer.company,
+          attentionTo: quotation.customer.attentionTo,
+          mobile: quotation.customer.mobile,
+          telephone: quotation.customer.telephone,
+          email: quotation.customer.email,
+        },
         lpoNumber: quotation.lpoNumber,
         lpoDate: quotation.lpoDate,
         items: quotation.items.map((item) => ({
@@ -253,7 +276,7 @@ export default function App() {
           id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
         })),
         totalAmount: calculateGrandTotal(quotation.items),
-        terms: settings.invoiceTerms,
+        terms: latestSettings.invoiceTerms,
         paymentMethod: 'Bank Transfer',
         paymentNote: DEFAULT_PAYMENT_NOTES['Bank Transfer'],
         stamp: '',
@@ -263,16 +286,13 @@ export default function App() {
         updatedAt: nowIso,
       };
 
-      setDocuments((prev) => {
-        const next = [newInvoice, ...prev];
-        saveDocuments(next);
-        return next;
-      });
-      setActiveDoc(newInvoice);
+      const { savedDoc, allDocuments } = saveDocumentTransaction(draftInvoice, latestSettings);
+      setDocuments(allDocuments);
+      setActiveDoc(savedDoc);
       setActiveTab('create');
-      showToast(`Converted ${quotation.number} to Invoice ${newInvoice.number}.`);
+      showToast(`Converted ${quotation.number} to Invoice ${savedDoc.number}.`);
     },
-    [documents, settings, showToast]
+    [showToast]
   );
 
   const handleDeleteDoc = useCallback(
@@ -338,11 +358,13 @@ export default function App() {
 
   const handleCreateDocForCustomer = useCallback(
     (customer: CustomerInfo, type: DocumentType) => {
-      const fresh = createFreshDocument(type, documents, settings, customer);
+      const latestDocs = loadDocuments();
+      const latestSettings = loadSettings();
+      const fresh = createFreshDocument(type, latestDocs, latestSettings, customer);
       setActiveDoc(fresh);
       setActiveTab('create');
     },
-    [documents, settings]
+    []
   );
 
   const handleSaveSettings = useCallback(
@@ -362,6 +384,8 @@ export default function App() {
       saveDocuments(data.documents);
       saveCustomers(data.customers);
       saveSettings(data.settings);
+      restoreCounters(data.counters);
+      syncCountersWithDocuments(data.documents);
       showToast('Backup restored successfully.');
     },
     [showToast]

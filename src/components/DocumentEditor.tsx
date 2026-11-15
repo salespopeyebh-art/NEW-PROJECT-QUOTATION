@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowDown,
   ArrowUp,
   Check,
@@ -39,6 +40,7 @@ import {
   parseDecimal,
   parseQtyNumber,
 } from '../utils/formatting';
+import { isNumberInUse, loadDocuments } from '../utils/storage';
 import { PdfPreview } from './PdfPreview';
 
 interface DocumentEditorProps {
@@ -100,6 +102,16 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
       .slice(0, 8);
   }, [doc.customer.company, knownCustomers]);
 
+  const isSavedDocument = useMemo(
+    () => allDocuments.some((d) => d.id === doc.id),
+    [allDocuments, doc.id]
+  );
+
+  const duplicateNumberDoc = useMemo(
+    () => isNumberInUse(doc.number, allDocuments, doc.id),
+    [doc.number, allDocuments, doc.id]
+  );
+
   const grandTotal = useMemo(() => calculateGrandTotal(doc.items), [doc.items]);
   const inWords = useMemo(() => numberToBahrainiWords(grandTotal), [grandTotal]);
   const whatsappUrl = useMemo(() => buildWhatsAppUrl(doc), [doc]);
@@ -107,9 +119,11 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
   const handleTypeSwitch = (nextType: DocumentType) => {
     if (doc.type === nextType) return;
     const year = extractYearFromDDMMYYYY(doc.date);
-    const nextNumber = doc.isManualNumber
-      ? doc.number
-      : generateNextDocNumber(nextType, year, allDocuments, settings, doc.id);
+    const latestDocs = loadDocuments();
+    const nextNumber =
+      doc.isManualNumber || isSavedDocument
+        ? doc.number
+        : generateNextDocNumber(nextType, year, latestDocs, settings, doc.id);
 
     // Swap default terms if user hasn't customized them away from the previous type's default
     let nextTerms = doc.terms;
@@ -133,8 +147,9 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
     const nextYear = extractYearFromDDMMYYYY(formatted);
     const prevYear = extractYearFromDDMMYYYY(doc.date);
     let nextNumber = doc.number;
-    if (!doc.isManualNumber && nextYear !== prevYear) {
-      nextNumber = generateNextDocNumber(doc.type, nextYear, allDocuments, settings, doc.id);
+    if (!isSavedDocument && !doc.isManualNumber && nextYear !== prevYear) {
+      const latestDocs = loadDocuments();
+      nextNumber = generateNextDocNumber(doc.type, nextYear, latestDocs, settings, doc.id);
     }
     onChangeDoc({
       ...doc,
@@ -145,7 +160,8 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
 
   const handleResetAutoNumber = () => {
     const year = extractYearFromDDMMYYYY(doc.date);
-    const autoNum = generateNextDocNumber(doc.type, year, allDocuments, settings, doc.id);
+    const latestDocs = loadDocuments();
+    const autoNum = generateNextDocNumber(doc.type, year, latestDocs, settings, doc.id);
     onChangeDoc({
       ...doc,
       number: autoNum,
@@ -359,11 +375,20 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
         <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
-            onClick={() => onNewBlank(doc.type)}
-            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 min-h-[44px] rounded-xl border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 text-sm font-semibold transition-colors whitespace-nowrap cursor-pointer"
+            onClick={() => onNewBlank('quotation')}
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 min-h-[44px] rounded-xl border border-[#1565C0]/30 bg-[#1565C0]/5 text-[#1565C0] hover:bg-[#1565C0]/10 text-sm font-semibold transition-colors whitespace-nowrap cursor-pointer"
           >
             <FilePlus2 className="w-4 h-4" />
-            New Blank
+            New Quotation
+          </button>
+
+          <button
+            type="button"
+            onClick={() => onNewBlank('invoice')}
+            className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 min-h-[44px] rounded-xl border border-[#FF5722]/30 bg-[#FF5722]/5 text-[#FF5722] hover:bg-[#FF5722]/10 text-sm font-semibold transition-colors whitespace-nowrap cursor-pointer"
+          >
+            <FilePlus2 className="w-4 h-4" />
+            New Invoice
           </button>
 
           <button
@@ -403,15 +428,17 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
         <div className={`lg:col-span-7 space-y-5 ${mobileView === 'preview' ? 'hidden lg:block' : 'block'}`}>
           {/* Document Details Card */}
           <section className="bg-white border border-slate-200 rounded-xl p-5 space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-2">
               <h2 className="text-base font-bold text-[#1A1A2E]">
                 {doc.type === 'quotation' ? 'Quotation Details' : 'Invoice Details'}
               </h2>
-              {doc.convertedFromQuotationNumber && (
-                <span className="text-xs text-slate-500">
-                  Converted from {doc.convertedFromQuotationNumber}
-                </span>
-              )}
+              <div className="flex items-center gap-2 text-xs text-slate-500">
+                {isSavedDocument && <span>Editing saved document</span>}
+                {isSavedDocument && doc.convertedFromQuotationNumber && <span aria-hidden="true">·</span>}
+                {doc.convertedFromQuotationNumber && (
+                  <span>Converted from {doc.convertedFromQuotationNumber}</span>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -430,7 +457,11 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
                         isManualNumber: true,
                       })
                     }
-                    className="w-full px-3.5 py-2.5 min-h-[44px] border border-slate-200 rounded-lg text-sm font-mono-num font-semibold text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#1565C0]/25 focus:border-[#1565C0]"
+                    className={`w-full px-3.5 py-2.5 min-h-[44px] border rounded-lg text-sm font-mono-num font-semibold text-[#1A1A2E] focus:outline-none focus:ring-2 ${
+                      duplicateNumberDoc
+                        ? 'border-[#FF5722] bg-orange-50/40 focus:ring-[#FF5722]/25 focus:border-[#FF5722]'
+                        : 'border-slate-200 focus:ring-[#1565C0]/25 focus:border-[#1565C0]'
+                    }`}
                   />
                   {doc.isManualNumber && (
                     <button
@@ -444,6 +475,18 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
                     </button>
                   )}
                 </div>
+                {duplicateNumberDoc && (
+                  <p className="mt-1.5 flex items-start gap-1.5 text-xs font-medium text-[#D84315]">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>
+                      Number <strong className="font-mono-num">{duplicateNumberDoc.number}</strong> already exists
+                      {duplicateNumberDoc.customer.company
+                        ? ` (${duplicateNumberDoc.customer.company})`
+                        : ''}
+                      . Saving will automatically assign the next free number.
+                    </span>
+                  </p>
+                )}
               </div>
 
               <div>

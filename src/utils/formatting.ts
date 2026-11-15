@@ -1,4 +1,5 @@
 import { AppSettings, DocumentRecord, DocumentType, LineItem } from '../types';
+import { computeNextFreeDocNumber } from './storage';
 
 export function formatTodayDDMMYYYY(): string {
   const now = new Date();
@@ -154,30 +155,7 @@ export function generateNextDocNumber(
   settings: AppSettings,
   excludeDocId?: string
 ): string {
-  const prefix = type === 'quotation' ? 'QT' : 'INV';
-  const pattern = new RegExp(`^${prefix}-${year}-(\\d+)$`, 'i');
-
-  let maxSeq = 0;
-  for (const doc of documents) {
-    if (excludeDocId && doc.id === excludeDocId) continue;
-    if (doc.type !== type) continue;
-    const match = pattern.exec(doc.number.trim());
-    if (match) {
-      const seq = parseInt(match[1], 10);
-      if (Number.isFinite(seq) && seq > maxSeq) {
-        maxSeq = seq;
-      }
-    }
-  }
-
-  const yearConfig = settings.startingNumbers[year];
-  const configuredStart =
-    type === 'quotation'
-      ? yearConfig?.quotationStart ?? 1
-      : yearConfig?.invoiceStart ?? 1;
-
-  const nextSeq = Math.max(maxSeq + 1, configuredStart, 1);
-  return `${prefix}-${year}-${String(nextSeq).padStart(3, '0')}`;
+  return computeNextFreeDocNumber(type, year, documents, settings, excludeDocId).number;
 }
 
 export function sanitizeFilename(name: string): string {
