@@ -1,0 +1,6 @@
+{
+  "name": "Popeyee Stationery W.L.L — Quotations & Invoices",
+  "description": "Create, preview, and download A4 PDF Quotations and Invoices for Popeyee Stationery W.L.L (Bahrain).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
