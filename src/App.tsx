@@ -3,6 +3,7 @@ import { CheckCircle2, FilePlus2, HardDrive, X } from 'lucide-react';
 import { CustomersView } from './components/CustomersView';
 import { DocumentEditor } from './components/DocumentEditor';
 import { HistoryView } from './components/HistoryView';
+import { ResetNumberingModal, ResetNumberingScope } from './components/ResetNumberingModal';
 import { SettingsView } from './components/SettingsView';
 import { DEFAULT_PAYMENT_NOTES } from './constants';
 import {
@@ -23,17 +24,19 @@ import {
 } from './utils/formatting';
 import { generateDocumentPdf } from './utils/pdfGenerator';
 import {
-  deleteAllDataTransaction,
+  computeNextNumberFromDocuments,
+  deleteAllCustomersStorage,
+  deleteAllDocumentsStorage,
+  factoryResetStorage,
   loadCustomers,
   loadDocuments,
   loadSettings,
-  resetCounterTransaction,
-  restoreCounters,
+  purgeLegacyCounters,
+  resetDocumentsByDateRange,
   saveCustomers,
+  saveDocumentRecord,
   saveDocuments,
-  saveDocumentTransaction,
   saveSettings,
-  syncCountersWithDocuments,
 } from './utils/storage';
 
 type ActiveTab = 'create' | 'history' | 'customers' | 'settings';
@@ -84,22 +87,25 @@ function createFreshDocument(
 }
 
 export default function App() {
-  const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    purgeLegacyCounters();
+    return loadSettings();
+  });
   const [documents, setDocuments] = useState<DocumentRecord[]>(() => {
-    const docs = loadDocuments();
-    syncCountersWithDocuments(docs);
-    return docs;
+    purgeLegacyCounters();
+    return loadDocuments();
   });
   const [customers, setCustomers] = useState<SavedCustomer[]>(() => loadCustomers());
   const [activeTab, setActiveTab] = useState<ActiveTab>('create');
   const [activeDoc, setActiveDoc] = useState<DocumentRecord>(() => {
+    purgeLegacyCounters();
     const docs = loadDocuments();
     const cfg = loadSettings();
-    syncCountersWithDocuments(docs);
     return createFreshDocument('quotation', docs, cfg);
   });
   const [toast, setToast] = useState<{ text: string; tone: 'success' | 'error' } | null>(null);
   const [showStorageBanner, setShowStorageBanner] = useState(true);
+  const [resetNumberingModalOpen, setResetNumberingModalOpen] = useState(false);
 
   const showToast = useCallback((text: string, tone: 'success' | 'error' = 'success') => {
     setToast({ text, tone });
@@ -162,10 +168,7 @@ export default function App() {
         updatedAt: nowIso,
       };
 
-      const { savedDoc, allDocuments, numberAdjustedFrom } = saveDocumentTransaction(
-        normalized,
-        settings
-      );
+      const { savedDoc, allDocuments, numberAdjustedFrom } = saveDocumentRecord(normalized);
 
       setDocuments(allDocuments);
       setActiveDoc(savedDoc);
@@ -185,7 +188,7 @@ export default function App() {
       }
       return savedDoc;
     },
-    [settings, showToast, upsertCustomerFromInfo]
+    [showToast, upsertCustomerFromInfo]
   );
 
   const handleDownloadPdf = useCallback(
@@ -288,7 +291,7 @@ export default function App() {
         updatedAt: nowIso,
       };
 
-      const { savedDoc, allDocuments } = saveDocumentTransaction(draftInvoice, latestSettings);
+      const { savedDoc, allDocuments } = saveDocumentRecord(draftInvoice);
       setDocuments(allDocuments);
       setActiveDoc(savedDoc);
       setActiveTab('create');
@@ -299,11 +302,21 @@ export default function App() {
 
   const handleDeleteDoc = useCallback(
     (id: string) => {
-      setDocuments((prev) => {
-        const next = prev.filter((d) => d.id !== id);
-        saveDocuments(next);
-        return next;
+      const latestDocs = loadDocuments().filter((d) => d.id !== id);
+      saveDocuments(latestDocs);
+      setDocuments(latestDocs);
+
+      // Refresh unsaved draft number immediately when a document is deleted
+      setActiveDoc((prev) => {
+        const isStillSaved = latestDocs.some((d) => d.id === prev.id);
+        if (isStillSaved || prev.isManualNumber) return prev;
+        const year = extractYearFromDDMMYYYY(prev.date);
+        return {
+          ...prev,
+          number: generateNextDocNumber(prev.type, year, latestDocs),
+        };
       });
+
       showToast('Document deleted.');
     },
     [showToast]
@@ -380,60 +393,101 @@ export default function App() {
 
   const handleImportBackup = useCallback(
     (data: ExportBackupData) => {
+      purgeLegacyCounters();
       setDocuments(data.documents);
       setCustomers(data.customers);
       setSettings(data.settings);
       saveDocuments(data.documents);
       saveCustomers(data.customers);
       saveSettings(data.settings);
-      restoreCounters(data.counters);
-      syncCountersWithDocuments(data.documents);
+      setActiveDoc((prev) => {
+        const isExisting = data.documents.some((d) => d.id === prev.id);
+        if (isExisting) return prev;
+        return createFreshDocument(prev.type, data.documents, data.settings);
+      });
       showToast('Backup restored successfully.');
     },
     [showToast]
   );
 
-  const handleResetNumbering = useCallback(
-    (type: DocumentType, year: string, nextNumber: number) => {
+  const handleConfirmResetNumbering = useCallback(
+    (scope: ResetNumberingScope, year: string, month: string, day: string) => {
+      const { deletedDocs, remainingDocs, nextQuotationNumber, nextInvoiceNumber } =
+        resetDocumentsByDateRange(scope, year, month, day);
+
       const latestSettings = loadSettings();
-      const updatedSettings = resetCounterTransaction(type, year, nextNumber, latestSettings);
-      const latestDocs = loadDocuments();
+      const prevYearCfg = latestSettings.startingNumbers[year] || {
+        quotationStart: 1,
+        invoiceStart: 1,
+      };
+      const updatedSettings: AppSettings = {
+        ...latestSettings,
+        startingNumbers: {
+          ...latestSettings.startingNumbers,
+          [year]: {
+            quotationStart:
+              scope === 'quotation' || scope === 'both' ? 1 : prevYearCfg.quotationStart,
+            invoiceStart:
+              scope === 'invoice' || scope === 'both' ? 1 : prevYearCfg.invoiceStart,
+          },
+        },
+      };
+      saveSettings(updatedSettings);
       setSettings(updatedSettings);
-      setDocuments(latestDocs);
+      setDocuments(remainingDocs);
+      setCustomers(loadCustomers());
 
-      const formattedTarget = `${type === 'quotation' ? 'QT' : 'INV'}-${year}-${String(
-        Math.max(1, nextNumber)
-      ).padStart(3, '0')}`;
-
+      const deletedIds = new Set(deletedDocs.map((d) => d.id));
       setActiveDoc((prev) => {
-        const isExistingSaved = latestDocs.some((d) => d.id === prev.id);
-        if (!isExistingSaved) {
+        if (deletedIds.has(prev.id)) {
+          return createFreshDocument(prev.type, remainingDocs, updatedSettings);
+        }
+        const isStillSaved = remainingDocs.some((d) => d.id === prev.id);
+        if (!isStillSaved && !prev.isManualNumber) {
           const prevYear = extractYearFromDDMMYYYY(prev.date);
-          if (prev.type === type && prevYear === year) {
-            return { ...prev, number: formattedTarget, isManualNumber: false };
-          }
           return {
             ...prev,
-            number: generateNextDocNumber(prev.type, prevYear, latestDocs, updatedSettings, prev.id),
-            isManualNumber: false,
+            number: computeNextNumberFromDocuments(prev.type, prevYear, remainingDocs),
           };
         }
-        return createFreshDocument(type, latestDocs, updatedSettings);
+        return prev;
       });
 
-      showToast(`Counter reset. Next ${type} for ${year} is ${formattedTarget}.`);
+      const nextLabel =
+        scope === 'both'
+          ? `${nextQuotationNumber} and ${nextInvoiceNumber}`
+          : scope === 'quotation'
+          ? nextQuotationNumber
+          : nextInvoiceNumber;
+      showToast(
+        `Deleted ${deletedDocs.length} document${deletedDocs.length === 1 ? '' : 's'}. Next number: ${nextLabel}.`
+      );
     },
     [showToast]
   );
 
-  const handleDeleteAllData = useCallback(() => {
+  const handleDeleteAllDocuments = useCallback(() => {
+    deleteAllDocumentsStorage();
+    setDocuments([]);
     const latestSettings = loadSettings();
-    const updatedSettings = deleteAllDataTransaction(latestSettings);
+    setActiveDoc((prev) => createFreshDocument(prev.type, [], latestSettings));
+    showToast('All saved quotations and invoices deleted. Numbering reset to 001.');
+  }, [showToast]);
+
+  const handleDeleteAllCustomers = useCallback(() => {
+    deleteAllCustomersStorage();
+    setCustomers([]);
+    showToast('All saved customers deleted.');
+  }, [showToast]);
+
+  const handleFactoryReset = useCallback(() => {
+    const latestSettings = loadSettings();
+    const updatedSettings = factoryResetStorage(latestSettings);
     setDocuments([]);
     setCustomers([]);
     setSettings(updatedSettings);
     setActiveDoc((prev) => createFreshDocument(prev.type, [], updatedSettings));
-    showToast('All saved quotations, invoices, and customers deleted. Counters reset to 001.');
+    showToast('Factory reset complete. Documents and customers cleared; terms and bank details preserved.');
   }, [showToast]);
 
   return (
@@ -580,6 +634,7 @@ export default function App() {
             onDownloadPdf={handleDownloadPdf}
             onNewBlank={handleNewBlank}
             onQuickSaveCustomer={upsertCustomerFromInfo}
+            onOpenResetNumbering={() => setResetNumberingModalOpen(true)}
           />
         )}
 
@@ -613,11 +668,22 @@ export default function App() {
             customers={customers}
             onSaveSettings={handleSaveSettings}
             onImportBackup={handleImportBackup}
-            onResetNumbering={handleResetNumbering}
-            onDeleteAllData={handleDeleteAllData}
+            onOpenResetNumbering={() => setResetNumberingModalOpen(true)}
+            onDeleteAllDocuments={handleDeleteAllDocuments}
+            onDeleteAllCustomers={handleDeleteAllCustomers}
+            onFactoryReset={handleFactoryReset}
           />
         )}
       </main>
+
+      <ResetNumberingModal
+        isOpen={resetNumberingModalOpen}
+        defaultScope={activeTab === 'create' ? activeDoc.type : 'both'}
+        year={extractYearFromDDMMYYYY(activeDoc.date)}
+        documents={documents}
+        onClose={() => setResetNumberingModalOpen(false)}
+        onConfirm={handleConfirmResetNumbering}
+      />
 
       {/* Non-blocking Toast */}
       {toast && (

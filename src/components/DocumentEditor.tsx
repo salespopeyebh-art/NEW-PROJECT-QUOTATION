@@ -53,6 +53,7 @@ interface DocumentEditorProps {
   onDownloadPdf: (docToDownload: DocumentRecord) => Promise<void>;
   onNewBlank: (type: DocumentType) => void;
   onQuickSaveCustomer: (customer: CustomerInfo) => void;
+  onOpenResetNumbering: () => void;
 }
 
 export const DocumentEditor: React.FC<DocumentEditorProps> = ({
@@ -65,6 +66,7 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
   onDownloadPdf,
   onNewBlank,
   onQuickSaveCustomer,
+  onOpenResetNumbering,
 }) => {
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
   const [showCompanySuggestions, setShowCompanySuggestions] = useState(false);
@@ -443,9 +445,18 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  Document Number
-                </label>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Document Number
+                  </label>
+                  <button
+                    type="button"
+                    onClick={onOpenResetNumbering}
+                    className="text-xs font-medium text-[#1565C0] hover:underline cursor-pointer"
+                  >
+                    Reset numbering
+                  </button>
+                </div>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -463,17 +474,15 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
                         : 'border-slate-200 focus:ring-[#1565C0]/25 focus:border-[#1565C0]'
                     }`}
                   />
-                  {doc.isManualNumber && (
-                    <button
-                      type="button"
-                      onClick={handleResetAutoNumber}
-                      title="Reset to automatic number"
-                      className="px-3 py-2.5 min-h-[44px] rounded-lg border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 flex items-center gap-1 whitespace-nowrap cursor-pointer"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      Auto
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={handleResetAutoNumber}
+                    title="Calculate next number from saved documents"
+                    className="px-3 py-2.5 min-h-[44px] rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Auto
+                  </button>
                 </div>
                 {duplicateNumberDoc && (
                   <p className="mt-1.5 flex items-start gap-1.5 text-xs font-medium text-[#D84315]">
@@ -491,7 +500,7 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  Date (DD-MM-YYYY: <span className="font-mono-num">{doc.date}</span>)
+                  Date
                 </label>
                 <input
                   type="date"

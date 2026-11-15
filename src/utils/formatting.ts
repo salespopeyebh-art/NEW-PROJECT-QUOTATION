@@ -1,5 +1,5 @@
 import { AppSettings, DocumentRecord, DocumentType, LineItem } from '../types';
-import { computeNextFreeDocNumber } from './storage';
+import { computeNextNumberFromDocuments } from './storage';
 
 export function formatTodayDDMMYYYY(): string {
   const now = new Date();
@@ -152,10 +152,10 @@ export function generateNextDocNumber(
   type: DocumentType,
   year: string,
   documents: DocumentRecord[],
-  settings: AppSettings,
+  _settings?: AppSettings,
   excludeDocId?: string
 ): string {
-  return computeNextFreeDocNumber(type, year, documents, settings, excludeDocId).number;
+  return computeNextNumberFromDocuments(type, year, documents, excludeDocId);
 }
 
 export function sanitizeFilename(name: string): string {
