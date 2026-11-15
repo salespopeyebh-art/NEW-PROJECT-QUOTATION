@@ -17,26 +17,48 @@ export function getCounterKey(type: DocumentType, year: string): string {
   return `counters/${type}-${year}`;
 }
 
-export function getCounterValue(type: DocumentType, year: string): number {
+export function hasCounterKey(type: DocumentType, year: string): boolean {
+  return localStorage.getItem(getCounterKey(type, year)) !== null;
+}
+
+function getCounterRecord(
+  type: DocumentType,
+  year: string
+): { lastNumber: number; allowRepeatFromReset: boolean } {
   try {
     const raw = localStorage.getItem(getCounterKey(type, year));
-    if (!raw) return 0;
+    if (!raw) return { lastNumber: 0, allowRepeatFromReset: false };
     const parsed = JSON.parse(raw);
     if (typeof parsed === 'number' && Number.isFinite(parsed)) {
-      return Math.max(0, Math.floor(parsed));
+      return { lastNumber: Math.max(0, Math.floor(parsed)), allowRepeatFromReset: false };
     }
     if (parsed && typeof parsed.lastNumber === 'number' && Number.isFinite(parsed.lastNumber)) {
-      return Math.max(0, Math.floor(parsed.lastNumber));
+      return {
+        lastNumber: Math.max(0, Math.floor(parsed.lastNumber)),
+        allowRepeatFromReset: Boolean(parsed.allowRepeatFromReset),
+      };
     }
-    return 0;
+    return { lastNumber: 0, allowRepeatFromReset: false };
   } catch {
-    return 0;
+    return { lastNumber: 0, allowRepeatFromReset: false };
   }
 }
 
-export function setCounterValue(type: DocumentType, year: string, lastNumber: number): void {
+export function getCounterValue(type: DocumentType, year: string): number {
+  return getCounterRecord(type, year).lastNumber;
+}
+
+export function setCounterValue(
+  type: DocumentType,
+  year: string,
+  lastNumber: number,
+  allowRepeatFromReset = false
+): void {
   const safeVal = Math.max(0, Math.floor(lastNumber));
-  localStorage.setItem(getCounterKey(type, year), JSON.stringify({ lastNumber: safeVal }));
+  localStorage.setItem(
+    getCounterKey(type, year),
+    JSON.stringify({ lastNumber: safeVal, allowRepeatFromReset })
+  );
 }
 
 export function getAllCounters(): Record<string, number> {
@@ -194,14 +216,22 @@ export function computeNextFreeDocNumber(
     }
   }
 
-  const storedCounter = getCounterValue(type, year);
+  const counterRec = getCounterRecord(type, year);
   const yearConfig = settings.startingNumbers[year];
   const configuredStart =
     type === 'quotation'
       ? yearConfig?.quotationStart ?? 1
       : yearConfig?.invoiceStart ?? 1;
 
-  let nextSeq = Math.max(storedCounter + 1, maxInHistory + 1, configuredStart, 1);
+  if (counterRec.allowRepeatFromReset) {
+    const nextSeq = Math.max(counterRec.lastNumber + 1, 1);
+    return {
+      number: `${prefix}-${year}-${String(nextSeq).padStart(3, '0')}`,
+      seq: nextSeq,
+    };
+  }
+
+  let nextSeq = Math.max(counterRec.lastNumber + 1, maxInHistory + 1, configuredStart, 1);
   let candidate = `${prefix}-${year}-${String(nextSeq).padStart(3, '0')}`;
 
   // Guarantee candidate never collides with any existing document in history
@@ -217,7 +247,7 @@ let transactionLock = false;
 
 /**
  * Atomic transaction to save a document and advance counters/{type}-{year}
- * only when a document is saved for the first time (never reusing an existing number).
+ * only when a document is saved for the first time.
  */
 export function saveDocumentTransaction(
   docToSave: DocumentRecord,
@@ -245,11 +275,21 @@ export function saveDocumentTransaction(
     let finalNumber = docToSave.number.trim();
     let numberAdjustedFrom: string | undefined;
 
+    const counterRec = getCounterRecord(docToSave.type, year);
     const duplicate = isNumberInUse(finalNumber, currentDocs, docToSave.id);
 
     if (isNewDocument) {
-      if (!finalNumber || duplicate || !docToSave.isManualNumber) {
-        // For new documents (auto or colliding manual number), reserve the next free number atomically
+      if (counterRec.allowRepeatFromReset && !docToSave.isManualNumber) {
+        // Explicit counter reset was requested: use the reset counter sequence directly
+        const { number: resetNext } = computeNextFreeDocNumber(
+          docToSave.type,
+          year,
+          currentDocs,
+          settings,
+          docToSave.id
+        );
+        finalNumber = resetNext;
+      } else if (!finalNumber || duplicate || !docToSave.isManualNumber) {
         const { number: nextFree } = computeNextFreeDocNumber(
           docToSave.type,
           year,
@@ -267,8 +307,8 @@ export function saveDocumentTransaction(
         }
       }
 
-      // Final safety check so two documents can never share the same number
-      if (isNumberInUse(finalNumber, currentDocs, docToSave.id)) {
+      // Final safety check when not in explicit reset-repeat mode
+      if (!counterRec.allowRepeatFromReset && isNumberInUse(finalNumber, currentDocs, docToSave.id)) {
         const { number: nextFree } = computeNextFreeDocNumber(
           docToSave.type,
           year,
@@ -281,19 +321,19 @@ export function saveDocumentTransaction(
       }
 
       // Advance the counter atomically in storage for this type and year
-      const currentCounter = getCounterValue(docToSave.type, year);
+      const currentCounter = counterRec.lastNumber;
       const match = seqPattern.exec(finalNumber);
       if (match) {
         const parsedSeq = parseInt(match[1], 10);
         if (Number.isFinite(parsedSeq) && parsedSeq > currentCounter) {
-          setCounterValue(docToSave.type, year, parsedSeq);
+          setCounterValue(docToSave.type, year, parsedSeq, counterRec.allowRepeatFromReset);
         }
       } else {
-        setCounterValue(docToSave.type, year, currentCounter + 1);
+        setCounterValue(docToSave.type, year, currentCounter + 1, counterRec.allowRepeatFromReset);
       }
     } else {
       // Editing an existing document: keep its own number unless it collides with another doc
-      if (!finalNumber || duplicate) {
+      if (!finalNumber || (!counterRec.allowRepeatFromReset && duplicate)) {
         const { number: nextFree } = computeNextFreeDocNumber(
           docToSave.type,
           year,
@@ -326,6 +366,64 @@ export function saveDocumentTransaction(
   } finally {
     transactionLock = false;
   }
+}
+
+export function resetCounterTransaction(
+  type: DocumentType,
+  year: string,
+  nextStartNumber: number,
+  currentSettings: AppSettings
+): AppSettings {
+  const safeNext = Math.max(1, Math.floor(nextStartNumber));
+  setCounterValue(type, year, safeNext - 1, true);
+
+  const prevYearCfg = currentSettings.startingNumbers[year] || {
+    quotationStart: 1,
+    invoiceStart: 1,
+  };
+  const nextSettings: AppSettings = {
+    ...currentSettings,
+    startingNumbers: {
+      ...currentSettings.startingNumbers,
+      [year]: {
+        ...prevYearCfg,
+        ...(type === 'quotation' ? { quotationStart: safeNext } : { invoiceStart: safeNext }),
+      },
+    },
+  };
+  saveSettings(nextSettings);
+  return nextSettings;
+}
+
+export function deleteAllDataTransaction(currentSettings: AppSettings): AppSettings {
+  saveDocuments([]);
+  saveCustomers([]);
+
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith('counters/')) {
+      keysToRemove.push(k);
+    }
+  }
+  keysToRemove.forEach((k) => localStorage.removeItem(k));
+
+  const currentYear = String(new Date().getFullYear());
+  setCounterValue('quotation', currentYear, 0, false);
+  setCounterValue('invoice', currentYear, 0, false);
+
+  // Preserve saved terms and bank details; reset starting numbers to 1
+  const nextSettings: AppSettings = {
+    ...currentSettings,
+    startingNumbers: {
+      [currentYear]: {
+        quotationStart: 1,
+        invoiceStart: 1,
+      },
+    },
+  };
+  saveSettings(nextSettings);
+  return nextSettings;
 }
 
 export function buildExportData(

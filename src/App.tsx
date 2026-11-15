@@ -23,9 +23,11 @@ import {
 } from './utils/formatting';
 import { generateDocumentPdf } from './utils/pdfGenerator';
 import {
+  deleteAllDataTransaction,
   loadCustomers,
   loadDocuments,
   loadSettings,
+  resetCounterTransaction,
   restoreCounters,
   saveCustomers,
   saveDocuments,
@@ -391,6 +393,49 @@ export default function App() {
     [showToast]
   );
 
+  const handleResetNumbering = useCallback(
+    (type: DocumentType, year: string, nextNumber: number) => {
+      const latestSettings = loadSettings();
+      const updatedSettings = resetCounterTransaction(type, year, nextNumber, latestSettings);
+      const latestDocs = loadDocuments();
+      setSettings(updatedSettings);
+      setDocuments(latestDocs);
+
+      const formattedTarget = `${type === 'quotation' ? 'QT' : 'INV'}-${year}-${String(
+        Math.max(1, nextNumber)
+      ).padStart(3, '0')}`;
+
+      setActiveDoc((prev) => {
+        const isExistingSaved = latestDocs.some((d) => d.id === prev.id);
+        if (!isExistingSaved) {
+          const prevYear = extractYearFromDDMMYYYY(prev.date);
+          if (prev.type === type && prevYear === year) {
+            return { ...prev, number: formattedTarget, isManualNumber: false };
+          }
+          return {
+            ...prev,
+            number: generateNextDocNumber(prev.type, prevYear, latestDocs, updatedSettings, prev.id),
+            isManualNumber: false,
+          };
+        }
+        return createFreshDocument(type, latestDocs, updatedSettings);
+      });
+
+      showToast(`Counter reset. Next ${type} for ${year} is ${formattedTarget}.`);
+    },
+    [showToast]
+  );
+
+  const handleDeleteAllData = useCallback(() => {
+    const latestSettings = loadSettings();
+    const updatedSettings = deleteAllDataTransaction(latestSettings);
+    setDocuments([]);
+    setCustomers([]);
+    setSettings(updatedSettings);
+    setActiveDoc((prev) => createFreshDocument(prev.type, [], updatedSettings));
+    showToast('All saved quotations, invoices, and customers deleted. Counters reset to 001.');
+  }, [showToast]);
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F6F8FB] text-[#1A1A2E]">
       {/* Top Navigation Bar (3-zone contract) */}
@@ -568,6 +613,8 @@ export default function App() {
             customers={customers}
             onSaveSettings={handleSaveSettings}
             onImportBackup={handleImportBackup}
+            onResetNumbering={handleResetNumbering}
+            onDeleteAllData={handleDeleteAllData}
           />
         )}
       </main>
