@@ -402,9 +402,7 @@ export async function generateDocumentPdf(
     const bankRows: Array<[string, string]> = [
       ['Account Name:', bankDetails.accountName],
       ['Bank:', bankDetails.bankName],
-      ['Account No:', bankDetails.accountNo],
       ['IBAN:', bankDetails.iban],
-      ['SWIFT:', bankDetails.swift],
       ['Currency:', bankDetails.currency],
     ];
     const boxPaddingTop = 5.5;

@@ -21,9 +21,7 @@ export const QUOTATION_CLOSING_TEXT =
 export const DEFAULT_BANK_DETAILS: BankDetails = {
   accountName: 'POPEYEE STATIONERY W.L.L',
   bankName: 'Al Salam Bank B.S.C.',
-  accountNo: '276882100100',
   iban: 'BH70ALSA00276882100100',
-  swift: 'ALSABHBM',
   currency: 'Bahraini Dinar',
 };
 

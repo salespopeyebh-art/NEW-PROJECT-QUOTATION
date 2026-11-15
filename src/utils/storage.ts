@@ -1,6 +1,7 @@
 import { getDefaultSettings } from '../constants';
 import {
   AppSettings,
+  BankDetails,
   DocumentRecord,
   DocumentType,
   ExportBackupData,
@@ -58,13 +59,40 @@ export function saveCustomers(customers: SavedCustomer[]): void {
   localStorage.setItem(KEYS.CUSTOMERS, JSON.stringify(customers));
 }
 
+function sanitizeBankDetails(raw: unknown, defaults: BankDetails): BankDetails {
+  const obj = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  return {
+    accountName:
+      typeof obj.accountName === 'string' && obj.accountName.trim()
+        ? obj.accountName
+        : defaults.accountName,
+    bankName:
+      typeof obj.bankName === 'string' && obj.bankName.trim()
+        ? obj.bankName
+        : defaults.bankName,
+    iban:
+      typeof obj.iban === 'string' && obj.iban.trim()
+        ? obj.iban
+        : defaults.iban,
+    currency:
+      typeof obj.currency === 'string' && obj.currency.trim()
+        ? obj.currency
+        : defaults.currency,
+  };
+}
+
 export function loadSettings(): AppSettings {
   const defaults = getDefaultSettings();
   try {
     const raw = localStorage.getItem(KEYS.SETTINGS);
     if (!raw) return defaults;
     const parsed = JSON.parse(raw);
-    return {
+    const hasLegacyBankFields =
+      parsed.bankDetails &&
+      typeof parsed.bankDetails === 'object' &&
+      ('accountNo' in parsed.bankDetails || 'swift' in parsed.bankDetails);
+
+    const normalized: AppSettings = {
       quotationTerms:
         typeof parsed.quotationTerms === 'string' && parsed.quotationTerms.trim()
           ? parsed.quotationTerms
@@ -73,15 +101,18 @@ export function loadSettings(): AppSettings {
         typeof parsed.invoiceTerms === 'string' && parsed.invoiceTerms.trim()
           ? parsed.invoiceTerms
           : defaults.invoiceTerms,
-      bankDetails: {
-        ...defaults.bankDetails,
-        ...(parsed.bankDetails || {}),
-      },
+      bankDetails: sanitizeBankDetails(parsed.bankDetails, defaults.bankDetails),
       startingNumbers: {
         ...defaults.startingNumbers,
         ...(parsed.startingNumbers || {}),
       },
     };
+
+    if (hasLegacyBankFields) {
+      saveSettings(normalized);
+    }
+
+    return normalized;
   } catch {
     return defaults;
   }
@@ -400,10 +431,7 @@ export function parseImportData(jsonText: string): ExportBackupData {
   const settings: AppSettings = {
     quotationTerms: parsed.settings?.quotationTerms || defaults.quotationTerms,
     invoiceTerms: parsed.settings?.invoiceTerms || defaults.invoiceTerms,
-    bankDetails: {
-      ...defaults.bankDetails,
-      ...(parsed.settings?.bankDetails || {}),
-    },
+    bankDetails: sanitizeBankDetails(parsed.settings?.bankDetails, defaults.bankDetails),
     startingNumbers: {
       ...defaults.startingNumbers,
       ...(parsed.settings?.startingNumbers || {}),

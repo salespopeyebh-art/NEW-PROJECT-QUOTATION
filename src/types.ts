@@ -54,9 +54,7 @@ export interface DocumentRecord {
 export interface BankDetails {
   accountName: string;
   bankName: string;
-  accountNo: string;
   iban: string;
-  swift: string;
   currency: string;
 }
 

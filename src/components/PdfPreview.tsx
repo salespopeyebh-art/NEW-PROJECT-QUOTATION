@@ -346,12 +346,8 @@ export const PdfPreview: React.FC<PdfPreviewProps> = ({ document: doc, bankDetai
                       <span>{bankDetails.accountName}</span>
                       <span className="font-bold">Bank:</span>
                       <span>{bankDetails.bankName}</span>
-                      <span className="font-bold">Account No:</span>
-                      <span>{bankDetails.accountNo}</span>
                       <span className="font-bold">IBAN:</span>
                       <span>{bankDetails.iban}</span>
-                      <span className="font-bold">SWIFT:</span>
-                      <span>{bankDetails.swift}</span>
                       <span className="font-bold">Currency:</span>
                       <span>{bankDetails.currency}</span>
                     </div>
