@@ -2,6 +2,8 @@ import { jsPDF } from 'jspdf';
 import { LETTERHEAD_IMAGE_PATH, QUOTATION_CLOSING_TEXT } from '../constants';
 import { BankDetails, DocumentRecord } from '../types';
 import {
+  calculateAdvanceAmount,
+  calculateBalanceAmount,
   calculateGrandTotal,
   calculateRowTotal,
   formatBHD,
@@ -301,28 +303,43 @@ export async function generateDocumentPdf(
     y += rowH;
   });
 
-  // TOTAL AMOUNT row
+  // TOTAL AMOUNT row (+ optional ADVANCE & BALANCE rows)
   const grandTotal = calculateGrandTotal(doc.items);
   const formattedTotal = formatBHD(grandTotal);
+  const showAdvance = doc.type === 'invoice' && Boolean(doc.hasAdvance);
+  const advanceAmount = calculateAdvanceAmount(doc);
+  const balanceAmount = calculateBalanceAmount(grandTotal, doc);
   const totalRowH = 7.5;
-  ensureSpace(totalRowH + 8);
+  ensureSpace(totalRowH * (showAdvance ? 3 : 1) + 8);
 
   const labelSpanW =
     COL_WIDTHS.sn + COL_WIDTHS.desc + COL_WIDTHS.qty + COL_WIDTHS.size + COL_WIDTHS.unit;
-  pdf.setLineWidth(0.3);
-  pdf.rect(MARGIN_X, y, labelSpanW, totalRowH);
-  pdf.rect(MARGIN_X + labelSpanW, y, COL_WIDTHS.total, totalRowH);
 
-  pdf.setFont('times', 'bold');
-  pdf.setFontSize(9.5);
-  pdf.text('TOTAL AMOUNT', MARGIN_X + labelSpanW - 3, y + 5.1, { align: 'right' });
-  pdf.text(`${formattedTotal} BD`, MARGIN_X + labelSpanW + COL_WIDTHS.total / 2, y + 5.1, {
-    align: 'center',
-  });
-  y += totalRowH + 4.5;
+  const drawSummaryRow = (label: string, valueText: string) => {
+    pdf.setLineWidth(0.3);
+    pdf.rect(MARGIN_X, y, labelSpanW, totalRowH);
+    pdf.rect(MARGIN_X + labelSpanW, y, COL_WIDTHS.total, totalRowH);
+
+    pdf.setFont('times', 'bold');
+    pdf.setFontSize(9.5);
+    pdf.text(label, MARGIN_X + labelSpanW - 3, y + 5.1, { align: 'right' });
+    pdf.text(valueText, MARGIN_X + labelSpanW + COL_WIDTHS.total / 2, y + 5.1, {
+      align: 'center',
+    });
+    y += totalRowH;
+  };
+
+  drawSummaryRow('TOTAL AMOUNT', `${formattedTotal} BD`);
+  if (showAdvance) {
+    drawSummaryRow('ADVANCE', `${formatBHD(advanceAmount)} BD`);
+    drawSummaryRow('BALANCE', `${formatBHD(balanceAmount)} BD`);
+  }
+  y += 4.5;
 
   // In words line
-  const inWordsText = `In words: ${numberToBahrainiWords(grandTotal)}`;
+  const inWordsText = `In words: ${numberToBahrainiWords(
+    showAdvance ? balanceAmount : grandTotal
+  )}`;
   pdf.setFont('times', 'bold');
   pdf.setFontSize(9);
   const inWordsLines = pdf.splitTextToSize(inWordsText, CONTENT_W) as string[];

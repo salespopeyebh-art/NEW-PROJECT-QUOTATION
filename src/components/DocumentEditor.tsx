@@ -29,6 +29,8 @@ import {
 } from '../types';
 import {
   buildWhatsAppUrl,
+  calculateAdvanceAmount,
+  calculateBalanceAmount,
   calculateGrandTotal,
   createEmptyLineItem,
   ddmmyyyyToInputDate,
@@ -115,7 +117,16 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
   );
 
   const grandTotal = useMemo(() => calculateGrandTotal(doc.items), [doc.items]);
-  const inWords = useMemo(() => numberToBahrainiWords(grandTotal), [grandTotal]);
+  const showAdvance = doc.type === 'invoice' && Boolean(doc.hasAdvance);
+  const advanceAmount = useMemo(() => calculateAdvanceAmount(doc), [doc]);
+  const balanceAmount = useMemo(
+    () => calculateBalanceAmount(grandTotal, doc),
+    [grandTotal, doc]
+  );
+  const inWords = useMemo(
+    () => numberToBahrainiWords(showAdvance ? balanceAmount : grandTotal),
+    [showAdvance, balanceAmount, grandTotal]
+  );
   const whatsappUrl = useMemo(() => buildWhatsAppUrl(doc), [doc]);
 
   const handleTypeSwitch = (nextType: DocumentType) => {
@@ -830,16 +841,91 @@ export const DocumentEditor: React.FC<DocumentEditorProps> = ({
               ))}
             </div>
 
-            {/* Grand Total & Amount in Words Summary */}
-            <div className="pt-4 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div className="text-xs text-slate-600">
-                <span className="font-semibold text-[#1A1A2E]">In words: </span>
-                {inWords}
-              </div>
-              <div className="text-right shrink-0">
-                <div className="text-xs font-semibold text-slate-500">TOTAL AMOUNT</div>
-                <div className="text-2xl font-bold text-[#1A1A2E] font-mono-num">
-                  {formatBHD(grandTotal)} BD
+            {/* Grand Total, Optional Advance, Balance & Amount in Words Summary */}
+            <div className="pt-4 border-t border-slate-200 space-y-4">
+              {doc.type === 'invoice' && (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-slate-50 border border-slate-200 rounded-xl p-3.5">
+                  <label className="inline-flex items-center gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(doc.hasAdvance)}
+                      onChange={(e) =>
+                        onChangeDoc({
+                          ...doc,
+                          hasAdvance: e.target.checked,
+                        })
+                      }
+                      className="w-4 h-4 rounded border-slate-300 text-[#1565C0] focus:ring-[#1565C0]"
+                    />
+                    <span className="text-sm font-semibold text-[#1A1A2E]">
+                      Include Advance Payment
+                    </span>
+                  </label>
+                  <span className="text-xs text-slate-500">
+                    Optional — tick to show Advance &amp; Balance on this invoice
+                  </span>
+                </div>
+              )}
+
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                <div className="text-xs text-slate-600 sm:pt-1">
+                  <span className="font-semibold text-[#1A1A2E]">
+                    {showAdvance ? 'Balance in words: ' : 'In words: '}
+                  </span>
+                  {inWords}
+                </div>
+
+                <div className="sm:min-w-[240px] space-y-2.5 text-right shrink-0">
+                  <div>
+                    <div className="text-xs font-semibold text-slate-500">TOTAL AMOUNT</div>
+                    <div className="text-2xl font-bold text-[#1A1A2E] font-mono-num">
+                      {formatBHD(grandTotal)} BD
+                    </div>
+                  </div>
+
+                  {showAdvance && (
+                    <>
+                      <div className="pt-2 border-t border-slate-200">
+                        <label
+                          htmlFor="invoice-advance-input"
+                          className="block text-xs font-semibold text-slate-700 mb-1"
+                        >
+                          ADVANCE (BD)
+                        </label>
+                        <input
+                          id="invoice-advance-input"
+                          type="number"
+                          step="0.001"
+                          min="0"
+                          value={doc.advanceAmount ?? ''}
+                          onChange={(e) =>
+                            onChangeDoc({
+                              ...doc,
+                              advanceAmount: e.target.value,
+                            })
+                          }
+                          placeholder="0.000"
+                          className="w-full sm:w-44 ml-auto px-3 py-2 min-h-[42px] bg-white border border-slate-300 rounded-lg text-right text-sm font-mono-num font-semibold text-[#1A1A2E] focus:outline-none focus:ring-2 focus:ring-[#1565C0]/25 focus:border-[#1565C0]"
+                        />
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-200">
+                        <div className="text-xs font-semibold text-slate-500">BALANCE</div>
+                        <div
+                          className={`text-xl font-bold font-mono-num ${
+                            balanceAmount < 0 ? 'text-[#FF5722]' : 'text-[#1565C0]'
+                          }`}
+                        >
+                          {formatBHD(balanceAmount)} BD
+                        </div>
+                        {advanceAmount > grandTotal && (
+                          <div className="text-[11px] font-medium text-[#D84315] mt-0.5">
+                            Advance exceeds Total Amount
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

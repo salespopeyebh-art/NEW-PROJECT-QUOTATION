@@ -9,7 +9,12 @@ import {
   Trash2,
 } from 'lucide-react';
 import { DocumentRecord, DocumentStatus, DocumentType } from '../types';
-import { calculateGrandTotal, extractYearFromDDMMYYYY, formatBHD } from '../utils/formatting';
+import {
+  calculateBalanceAmount,
+  calculateGrandTotal,
+  extractYearFromDDMMYYYY,
+  formatBHD,
+} from '../utils/formatting';
 
 interface HistoryViewProps {
   documents: DocumentRecord[];
@@ -183,7 +188,12 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
                 {filteredDocs.map((doc) => {
-                  const total = formatBHD(calculateGrandTotal(doc.items));
+                  const grandTotal = calculateGrandTotal(doc.items);
+                  const total = formatBHD(grandTotal);
+                  const hasAdv = doc.type === 'invoice' && Boolean(doc.hasAdvance);
+                  const balance = hasAdv
+                    ? formatBHD(calculateBalanceAmount(grandTotal, doc))
+                    : null;
                   return (
                     <tr key={doc.id} className="hover:bg-slate-50/70 transition-colors">
                       <td className="py-3.5 px-4 font-mono-num font-semibold text-[#1A1A2E] whitespace-nowrap">
@@ -215,7 +225,12 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                         )}
                       </td>
                       <td className="py-3.5 px-4 text-right font-mono-num font-semibold text-[#1A1A2E] whitespace-nowrap">
-                        {total}
+                        <div>{total}</div>
+                        {balance !== null && (
+                          <div className="text-[11px] font-normal text-[#1565C0] mt-0.5">
+                            Bal: {balance}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 px-4 whitespace-nowrap">
                         <select
@@ -295,7 +310,12 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           {/* Mobile / Tablet Cards */}
           <div className="lg:hidden space-y-3">
             {filteredDocs.map((doc) => {
-              const total = formatBHD(calculateGrandTotal(doc.items));
+              const grandTotal = calculateGrandTotal(doc.items);
+              const total = formatBHD(grandTotal);
+              const hasAdv = doc.type === 'invoice' && Boolean(doc.hasAdvance);
+              const balance = hasAdv
+                ? formatBHD(calculateBalanceAmount(grandTotal, doc))
+                : null;
               return (
                 <div
                   key={doc.id}
@@ -331,6 +351,11 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                       <div className="text-base font-bold font-mono-num text-[#1A1A2E]">
                         {total} BD
                       </div>
+                      {balance !== null && (
+                        <div className="text-xs font-mono-num text-[#1565C0]">
+                          Bal: {balance} BD
+                        </div>
+                      )}
                       <select
                         value={doc.status}
                         onChange={(e) => onUpdateStatus(doc.id, e.target.value as DocumentStatus)}

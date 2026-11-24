@@ -3,6 +3,8 @@ import { Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
 import { LETTERHEAD_IMAGE_PATH, QUOTATION_CLOSING_TEXT } from '../constants';
 import { BankDetails, DocumentRecord } from '../types';
 import {
+  calculateAdvanceAmount,
+  calculateBalanceAmount,
   calculateGrandTotal,
   calculateRowTotal,
   formatBHD,
@@ -45,14 +47,19 @@ export const PdfPreview: React.FC<PdfPreviewProps> = ({ document: doc, bankDetai
 
   const grandTotal = calculateGrandTotal(doc.items);
   const formattedTotal = formatBHD(grandTotal);
-  const inWords = numberToBahrainiWords(grandTotal);
+  const showAdvance = doc.type === 'invoice' && Boolean(doc.hasAdvance);
+  const advanceAmount = calculateAdvanceAmount(doc);
+  const balanceAmount = calculateBalanceAmount(grandTotal, doc);
+  const formattedAdvance = formatBHD(advanceAmount);
+  const formattedBalance = formatBHD(balanceAmount);
+  const inWords = numberToBahrainiWords(showAdvance ? balanceAmount : grandTotal);
 
   useEffect(() => {
     const contentEl = contentRef.current;
     if (!contentEl) return;
     const maxSafeContentHeight = A4_PX_H - SAFE_TOP_PX - SAFE_BOTTOM_PX;
     setOverflowsPageOne(contentEl.scrollHeight > maxSafeContentHeight + 6);
-  }, [doc, bankDetails, grandTotal]);
+  }, [doc, bankDetails, grandTotal, showAdvance, advanceAmount, balanceAmount]);
 
   const activeScale = zoomMode === 'fit' ? fitScale : zoomMode === '75' ? 0.75 : 1;
   const scaledW = Math.round(A4_PX_W * activeScale);
@@ -301,6 +308,27 @@ export const PdfPreview: React.FC<PdfPreviewProps> = ({ document: doc, bankDetai
                       {formattedTotal} BD
                     </td>
                   </tr>
+
+                  {showAdvance && (
+                    <>
+                      <tr className="font-bold text-[12.5px]">
+                        <td colSpan={5} className="border border-black py-1.5 px-3 text-right">
+                          ADVANCE
+                        </td>
+                        <td className="border border-black py-1.5 px-1 text-center tabular-nums">
+                          {formattedAdvance} BD
+                        </td>
+                      </tr>
+                      <tr className="font-bold text-[12.5px]">
+                        <td colSpan={5} className="border border-black py-1.5 px-3 text-right">
+                          BALANCE
+                        </td>
+                        <td className="border border-black py-1.5 px-1 text-center tabular-nums">
+                          {formattedBalance} BD
+                        </td>
+                      </tr>
+                    </>
+                  )}
                 </tbody>
               </table>
 

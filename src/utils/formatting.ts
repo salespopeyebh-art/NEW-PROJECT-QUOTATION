@@ -65,6 +65,25 @@ export function calculateGrandTotal(items: LineItem[]): number {
   return Number(sum.toFixed(3));
 }
 
+export function calculateAdvanceAmount(
+  doc: Pick<DocumentRecord, 'type' | 'hasAdvance' | 'advanceAmount'>
+): number {
+  if (doc.type !== 'invoice' || !doc.hasAdvance) return 0;
+  const val = parseDecimal(doc.advanceAmount || '');
+  return Math.max(0, Number(val.toFixed(3)));
+}
+
+export function calculateBalanceAmount(
+  grandTotal: number,
+  doc: Pick<DocumentRecord, 'type' | 'hasAdvance' | 'advanceAmount'>
+): number {
+  if (doc.type !== 'invoice' || !doc.hasAdvance) {
+    return Number(grandTotal.toFixed(3));
+  }
+  const advance = calculateAdvanceAmount(doc);
+  return Number((grandTotal - advance).toFixed(3));
+}
+
 const ONES = [
   '',
   'One',
@@ -189,16 +208,25 @@ export function buildWhatsAppUrl(doc: DocumentRecord): string {
   const phone = normalizeBahrainPhoneForWhatsApp(doc.customer.mobile || doc.customer.telephone || '');
   const typeLabel = doc.type === 'quotation' ? 'Quotation' : 'Invoice';
   const greetingName = doc.customer.attentionTo || doc.customer.company || 'Sir/Madam';
-  const amount = formatBHD(calculateGrandTotal(doc.items));
+  const grandTotal = calculateGrandTotal(doc.items);
+  const amount = formatBHD(grandTotal);
 
-  const message = [
+  const lines = [
     `Dear ${greetingName},`,
     `Please find your ${typeLabel} (${doc.number}) dated ${doc.date} from Popeyee Stationery W.L.L.`,
     `Total Amount: ${amount} BD.`,
-    `Thank you for your business.`,
-  ].join('\n');
+  ];
 
-  const encoded = encodeURIComponent(message);
+  if (doc.type === 'invoice' && doc.hasAdvance) {
+    const advance = calculateAdvanceAmount(doc);
+    const balance = calculateBalanceAmount(grandTotal, doc);
+    lines.push(`Advance: ${formatBHD(advance)} BD.`);
+    lines.push(`Balance: ${formatBHD(balance)} BD.`);
+  }
+
+  lines.push('Thank you for your business.');
+
+  const encoded = encodeURIComponent(lines.join('\n'));
   return phone ? `https://wa.me/${phone}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
 }
 

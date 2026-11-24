@@ -41,6 +41,8 @@ export interface DocumentRecord {
   lpoDate: string; // DD-MM-YYYY or empty
   items: LineItem[];
   totalAmount: number;
+  hasAdvance?: boolean;
+  advanceAmount?: string;
   terms: string;
   paymentMethod: PaymentMethod;
   paymentNote: string;
